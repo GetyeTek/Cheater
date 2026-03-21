@@ -114,25 +114,29 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
 
                     if (isProcessingBatch && id != null && !id.startsWith("STATUS_")) {
                         val file = File(audioFolder, id)
+                        val type = id.split("_").firstOrNull() ?: "sa"
                         
-                        // Verify file integrity (must be > 1KB to have a valid WAV header + data)
                         if (file.exists() && file.length() > 1024) {
-                            val type = id.split("_").firstOrNull() ?: "sa"
                             synchronized(playlists) {
-                                playlists.getOrPut(type) { mutableListOf() }.add(file)
+                                val list = playlists.getOrPut(type) { mutableListOf() }
+                                if (!list.contains(file)) {
+                                    list.add(file)
+                                    list.sortBy { it.name }
+                                }
+                                
+                                // AUTO-PLAY TRIGGER: If this is the FIRST file of the current type and nothing is playing
+                                if (type == currentType && list.size == 1 && (mediaPlayer == null || !mediaPlayer!!.isPlaying)) {
+                                    handler.post { 
+                                        currentIndex = 0
+                                        playCurrent() 
+                                    }
+                                }
                             }
-                            DebugLogger.log("TTS", "Validated: $id (${file.length()} bytes)")
-                        } else {
-                            DebugLogger.log("TTS_ERR", "Corrupt Output: $id. Size: ${file.length()}")
+                            DebugLogger.log("TTS", "Ready: $id")
                         }
                         
                         val remaining = pendingSyntheses.decrementAndGet()
-                        if (remaining > 0) {
-                            // Process next item in queue
-                            processNextInQueue()
-                        } else {
-                            finalizeBatch()
-                        }
+                        if (remaining > 0) processNextInQueue() else isProcessingBatch = false
                     }
                 }
 
@@ -345,15 +349,22 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             }
 
             val root = JSONObject(jsonStr)
+            val solutions = root.optJSONArray("solutions") ?: return
+            if (solutions.length() == 0) return
+
+            // Immediate Type Hijack: Lock navigation to the new incoming data
+            val firstSolution = solutions.optJSONObject(0)
+            val newType = firstSolution?.optString("type", "sa") ?: "sa"
+            
+            currentType = newType
+            currentIndex = 0
+            synchronized(playlists) { playlists[newType]?.clear() }
             
             // Announce Confidence Score if available
             val score = root.optInt("confidence_score", -1)
             if (score != -1) {
-                speakStatus("Confidence $score out of 10", 1)
+                speakStatus("Analysis complete. Confidence $score.", 1)
             }
-
-            val solutions = root.optJSONArray("solutions") ?: return
-            if (solutions.length() == 0) return
             
             isProcessingBatch = true
             synthesisQueue.clear()
@@ -456,16 +467,21 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         val list = playlists[type]
 
         if (type == null || list.isNullOrEmpty()) {
-            speakStatus("No solutions loaded", 2)
+            if (isProcessingBatch) speakStatus("Still thinking...", 0)
+            else speakStatus("No solutions loaded", 2)
             return
         }
         
         stopMediaOnly()
 
         if (currentIndex >= list.size - 1) {
-            // End of category reached: Advance to next category automatically
-            DebugLogger.log("NAV", "End of $type reached. Advancing to next category.")
-            playNextCategory()
+            if (isProcessingBatch) {
+                speakStatus("Waiting for next answer...", 1)
+            } else {
+                // End of category reached: Advance to next category automatically
+                DebugLogger.log("NAV", "End of $type reached. Advancing to next category.")
+                playNextCategory()
+            }
         } else {
             currentIndex++
             speakStatus("Next solution", 2)
