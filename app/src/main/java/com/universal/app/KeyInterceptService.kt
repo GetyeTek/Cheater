@@ -737,7 +737,7 @@ class KeyInterceptService : AccessibilityService() {
 
         if (isCam) {
             isInCameraSession = true
-            if (!prefs.getBoolean("is_active", false)) return
+            if (!prefs.getBoolean("is_active", true)) return
 
             if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || 
                (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && isLensSwitchPending)) {
