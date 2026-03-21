@@ -95,6 +95,12 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         if (status == TextToSpeech.SUCCESS) {
             tts.language = Locale.US
             tts.setSpeechRate(0.9f)
+            // Explicitly set TTS audio attributes to match MediaPlayer
+            val attr = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            tts.setAudioAttributes(attr)
             tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String?) { 
                     val msg = ttsMessageMap[id] ?: "System notification"
@@ -573,6 +579,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                     prepareAsync()
                     setOnPreparedListener { 
                         DebugLogger.log("MEDIA", "Starting Playback: ${file.name}")
+                        // Force full volume gain for this player instance
+                        setVolume(1.0f, 1.0f)
                         start() 
                     }
                     setOnErrorListener { _, what, extra ->
@@ -969,6 +977,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
 
     private fun playSpecificFile(fileName: String) {
         val file = File(audioFolder, fileName)
+        // Kill any ongoing status speech immediately to prevent volume ducking
+        if (::tts.isInitialized) tts.stop()
         
         // --- STEALTH CHECK ---
         val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
@@ -1010,6 +1020,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                     .build())
                 
                 newPlayer.setOnPreparedListener { 
+                    it.setVolume(1.0f, 1.0f)
                     it.start()
                     updateMediaSessionState(true)
                 }
