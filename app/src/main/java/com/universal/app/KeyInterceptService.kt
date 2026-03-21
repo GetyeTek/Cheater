@@ -48,6 +48,24 @@ class KeyInterceptService : AccessibilityService() {
     private var isLensSwitchPending = false
     private var autoCaptureRunnable: Runnable? = null
     private var isInCameraSession = false
+    private var cameraExitPending = false
+    private val cameraExitHandler = Handler(Looper.getMainLooper())
+    private val cameraExitRunnable = Runnable {
+        val activeRoot = rootInActiveWindow?.packageName?.toString() ?: ""
+        val rootIsCam = activeRoot.contains("camera") || activeRoot.contains("lens")
+        
+        if (!rootIsCam) {
+            DebugLogger.log("AUTO_CAM", "Camera Session Confirmed Ended")
+            isInCameraSession = false
+            speak("Camera closed", false)
+            lastCameraPackage = ""
+            isLensSwitchPending = false
+            autoCaptureRunnable?.let { handler.removeCallbacks(it) }
+            autoCaptureRunnable = null
+            removeTouchBlocker()
+        }
+        cameraExitPending = false
+    }
     private var isEarphoneNavMode = false
     private var isLongPressTriggered = false
     private var successiveRemaining = 0
@@ -736,6 +754,13 @@ class KeyInterceptService : AccessibilityService() {
         val isCam = pkg.contains("camera") || pkg.contains("lens")
 
         if (isCam) {
+            // Cancel any pending exit if the camera is back in focus
+            if (cameraExitPending) {
+                cameraExitHandler.removeCallbacks(cameraExitRunnable)
+                cameraExitPending = false
+                DebugLogger.log("AUTO_CAM", "Exit cancelled: Camera returned to focus")
+            }
+
             isInCameraSession = true
             if (!prefs.getBoolean("is_active", true)) return
 
@@ -749,22 +774,11 @@ class KeyInterceptService : AccessibilityService() {
                 }
             }
         } else if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && isInCameraSession) {
-            // Check if the actual active window is no longer the camera
-            val activeRoot = rootInActiveWindow?.packageName?.toString() ?: ""
-            val rootIsCam = activeRoot.contains("camera") || activeRoot.contains("lens")
-            
-            if (!isCam && !rootIsCam) {
-                DebugLogger.log("AUTO_CAM", "Camera Session Ended (Timeout/External)")
-                isInCameraSession = false
-                // Set to sequential queue
-                speak("Camera closed", false)
-                
-                // Global Cleanup
-                lastCameraPackage = ""
-                isLensSwitchPending = false
-                autoCaptureRunnable?.let { handler.removeCallbacks(it) }
-                autoCaptureRunnable = null
-                removeTouchBlocker()
+            // Instead of closing immediately, schedule a check
+            if (!cameraExitPending) {
+                cameraExitPending = true
+                DebugLogger.log("AUTO_CAM", "Camera lost focus. Scheduling exit check...")
+                cameraExitHandler.postDelayed(cameraExitRunnable, 1500)
             }
         }
     }
