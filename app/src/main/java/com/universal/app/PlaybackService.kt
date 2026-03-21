@@ -20,6 +20,9 @@ import java.util.*
 class PlaybackService : Service(), TextToSpeech.OnInitListener {
     private val audioSafetyReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("is_active", true)) return
+
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     speakStatus("Display deactivated", 2)
@@ -194,6 +197,10 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         if (isActive) {
             claimMediaFocus()
             if (intent == null) rebuildPlaylistsAndResume()
+        } else {
+            stopAllPlayback()
+            mediaSession?.isActive = false
+            return START_NOT_STICKY
         }
 
         val action = intent?.action
