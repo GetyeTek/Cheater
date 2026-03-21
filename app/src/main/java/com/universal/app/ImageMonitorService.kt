@@ -26,6 +26,11 @@ class ImageMonitorService : Service() {
     private val watchdogRunnable = object : Runnable {
         override fun run() {
             val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("is_active", true)) {
+                stopForeground(true)
+                stopSelf()
+                return
+            }
             if (prefs.getBoolean("is_active", true)) {
                 // Ensure PlaybackService is still alive (The 'Poke')
                 val intent = Intent(applicationContext, PlaybackService::class.java)
