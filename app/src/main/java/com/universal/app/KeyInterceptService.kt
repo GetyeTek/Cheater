@@ -57,7 +57,12 @@ class KeyInterceptService : AccessibilityService() {
         if (!rootIsCam) {
             DebugLogger.log("AUTO_CAM", "Camera Session Confirmed Ended")
             isInCameraSession = false
-            speak("Camera closed", false)
+            
+            val queueDir = File(cacheDir, "pending_uploads")
+            val count = queueDir.listFiles()?.size ?: 0
+            val countText = if (count == 1) "1 image queued" else "$count images queued"
+            speak("Camera closed. $countText.", false)
+
             lastCameraPackage = ""
             isLensSwitchPending = false
             autoCaptureRunnable?.let { handler.removeCallbacks(it) }
@@ -282,10 +287,15 @@ class KeyInterceptService : AccessibilityService() {
         
         if (currentPackage.contains("camera") || currentPackage.contains("lens") || currentPackage.contains("capture")) {
             DebugLogger.log("CAM_TOGGLE", "Camera detected active. Closing.")
-            isInCameraSession = false // Mark inactive to prevent double-speech in AccessibilityEvent
+            isInCameraSession = false 
             autoCaptureRunnable?.let { handler.removeCallbacks(it) }
             autoCaptureRunnable = null
-            speak("Camera closed", false)
+            
+            val queueDir = File(cacheDir, "pending_uploads")
+            val count = queueDir.listFiles()?.size ?: 0
+            val countText = if (count == 1) "1 image queued" else "$count images queued"
+            speak("Camera closed. $countText.", false)
+
             removeTouchBlocker()
             performGlobalAction(GLOBAL_ACTION_HOME)
         } else {
@@ -343,7 +353,6 @@ class KeyInterceptService : AccessibilityService() {
         try {
             wm.addView(blockerOverlay, params)
             DebugLogger.log("BLOCKER", "Global Touch Blocker Active")
-            speak("System locked")
         } catch (e: Exception) { DebugLogger.log("BLOCKER", "Error: ${e.message}") }
     }
 
@@ -569,8 +578,6 @@ class KeyInterceptService : AccessibilityService() {
             val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
             val total = prefs.getInt("successive_count", 3)
             DebugLogger.log("AUTO", "Batch complete. Closing camera automatically.")
-            // Set to sequential queue
-            speak("Batch complete. Closing camera.", false)
             
             // Auto-close sequence: Return to home and clear session states
             isInCameraSession = false // Set false BEFORE home action to prevent redundant event trigger
