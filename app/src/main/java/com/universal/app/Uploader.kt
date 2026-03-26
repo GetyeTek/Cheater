@@ -26,6 +26,13 @@ object Uploader {
     private const val SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2bGRmc214c2toZW1rc2xzYnltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2ODgxNzksImV4cCI6MjA3ODI2NDE3OX0.5arqrx8Tt7v-hpXpo_ncoK4IX8th9IibxAuv93SSoOU"
 
     private var isProcessing = false
+    private val watchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val watchdogRunnable = Runnable {
+        if (isProcessing) {
+            DebugLogger.log("WATCHDOG", "Upload process timed out. Force resetting lock.")
+            isProcessing = false
+        }
+    }
 
     fun enqueueFiles(context: Context, files: List<File>) {
         if (files.isEmpty()) {
@@ -40,6 +47,8 @@ object Uploader {
 
         Thread {
             isProcessing = true
+            watchdogHandler.removeCallbacks(watchdogRunnable)
+            watchdogHandler.postDelayed(watchdogRunnable, 180000) // 3-minute safety net
             val total = files.size
             DebugLogger.log("UPLOADER", "--- NEW BATCH STARTED ---")
             DebugLogger.log("UPLOADER", "Files detected: $total")
@@ -84,11 +93,30 @@ object Uploader {
                 .put(file.asRequestBody("image/jpeg".toMediaTypeOrNull()))
                 .build()
 
-            client.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    DebugLogger.log("NETWORK_ERR", "Connection failed for ${file.name}: ${e.message}")
-                    checkAllFinished()
-                }
+            try {
+                client.newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        DebugLogger.log("NETWORK_ERR", "Connection failed for ${file.name}: ${e.message}")
+                        checkAllFinished()
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        val code = response.code
+                        if (response.isSuccessful) {
+                            uploadedPaths.add(pathInBucket)
+                            DebugLogger.log("STORAGE", "SUCCESS: ${file.name} (Code: $code)")
+                        } else {
+                            val errorBody = response.body?.string() ?: "No details"
+                            DebugLogger.log("STORAGE_ERR", "REJECTED: ${file.name} (Code: $code) - $errorBody")
+                        }
+                        response.close()
+                        checkAllFinished()
+                    }
+                })
+            } catch (e: Exception) {
+                DebugLogger.log("NETWORK_CRITICAL", "Failed to even enqueue ${file.name}: ${e.message}")
+                checkAllFinished()
+            }
 
                 override fun onResponse(call: Call, response: Response) {
                     val code = response.code
@@ -142,12 +170,14 @@ object Uploader {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 isProcessing = false
+                watchdogHandler.removeCallbacks(watchdogRunnable)
                 DebugLogger.log("CLOUD_ERR", "Handshake FAILED: ${e.message}")
                 notifyVoice(context, "Failed to trigger analysis", 2)
             }
 
             override fun onResponse(call: Call, response: Response) {
                 isProcessing = false
+                watchdogHandler.removeCallbacks(watchdogRunnable)
                 val code = response.code
                 val bodyStr = response.body?.string() ?: ""
                 
