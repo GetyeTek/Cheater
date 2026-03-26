@@ -698,7 +698,16 @@ class KeyInterceptService : AccessibilityService() {
             if (intent.action != null) startService(intent)
         } else {
             when (sequence) {
-                "S" -> smartShutterClick()
+                "S" -> {
+                    val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+                    val hasData = !prefs.getString("last_type", null).isNullOrEmpty()
+                    if (hasData && !isCam) {
+                        val intentPause = Intent(this@KeyInterceptService, PlaybackService::class.java).apply { action = "PAUSE" }
+                        startService(intentPause)
+                    } else {
+                        smartShutterClick()
+                    }
+                }
                 "SS" -> toggleCamera()
                 "L" -> {
                     speak("Earphone trigger: Initiating batch upload", true)
