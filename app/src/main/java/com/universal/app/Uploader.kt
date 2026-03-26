@@ -90,14 +90,30 @@ object Uploader {
         val uploadedPaths = java.util.Collections.synchronizedList(mutableListOf<String>())
         val finishedCount = java.util.concurrent.atomic.AtomicInteger(0)
 
+        fun checkAllFinished() {
+            val current = finishedCount.incrementAndGet()
+            DebugLogger.log("UPLOADER", "Progress: $current/${files.size} requests finished.")
+            
+            if (current == files.size) {
+                files.forEach { it.delete() }
+                if (uploadedPaths.isNotEmpty()) {
+                    DebugLogger.log("UPLOADER", "Batch staging complete. Successful: ${uploadedPaths.size}/${files.size}")
+                    triggerFunction(context, uploadedPaths.toList())
+                } else {
+                    DebugLogger.log("UPLOADER", "FATAL: Zero images staged. AI aborted.")
+                    val errorMsg = if (!isOnline(context)) "Internet lost during upload." else "Storage rejected all images."
+                    notifyVoice(context, errorMsg, 2)
+                    isProcessing = false
+                    watchdogHandler.removeCallbacks(watchdogRunnable)
+                }
+            }
+        }
+
         DebugLogger.log("UPLOADER", "Assigned Batch ID: $batchId")
 
         files.forEach { file ->
             val pathInBucket = "$batchId/${file.name}"
             val targetUrl = "https://xvldfsmxskhemkslsbym.supabase.co/storage/v1/object/images/$pathInBucket"
-            
-            DebugLogger.log("NETWORK", "Starting PUT: $pathInBucket")
-            
             val request = Request.Builder()
                 .url(targetUrl)
                 .addHeader("Authorization", "Bearer $SUPABASE_KEY")
@@ -107,61 +123,24 @@ object Uploader {
             try {
                 client.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
-                        DebugLogger.log("NETWORK_ERR", "Connection failed for ${file.name}: ${e.message}")
+                        DebugLogger.log("NETWORK_ERR", "Failed ${file.name}: ${e.message}")
                         checkAllFinished()
                     }
-
                     override fun onResponse(call: Call, response: Response) {
-                        val code = response.code
                         if (response.isSuccessful) {
                             uploadedPaths.add(pathInBucket)
-                            DebugLogger.log("STORAGE", "SUCCESS: ${file.name} (Code: $code)")
+                            DebugLogger.log("STORAGE", "SUCCESS: ${file.name}")
                         } else {
-                            val errorBody = response.body?.string() ?: "No details"
-                            DebugLogger.log("STORAGE_ERR", "REJECTED: ${file.name} (Code: $code) - $errorBody")
+                            DebugLogger.log("STORAGE_ERR", "REJECTED: ${file.name} (Code: ${response.code})")
                         }
                         response.close()
                         checkAllFinished()
                     }
                 })
             } catch (e: Exception) {
-                DebugLogger.log("NETWORK_CRITICAL", "Failed to even enqueue ${file.name}: ${e.message}")
+                DebugLogger.log("NETWORK_CRITICAL", "Enqueue error: ${e.message}")
                 checkAllFinished()
             }
-
-                override fun onResponse(call: Call, response: Response) {
-                    val code = response.code
-                    if (response.isSuccessful) {
-                        uploadedPaths.add(pathInBucket)
-                        DebugLogger.log("STORAGE", "SUCCESS: ${file.name} (Code: $code)")
-                    } else {
-                        val errorBody = response.body?.string() ?: "No details"
-                        DebugLogger.log("STORAGE_ERR", "REJECTED: ${file.name} (Code: $code) - $errorBody")
-                    }
-                    response.close()
-                    checkAllFinished()
-                }
-
-                private fun checkAllFinished() {
-                    val current = finishedCount.incrementAndGet()
-                    DebugLogger.log("UPLOADER", "Progress: $current/${files.size} requests finished.")
-                    
-                    if (current == files.size) {
-                        // Cleanup: Files are no longer needed on disk after upload attempts
-                        files.forEach { it.delete() }
-
-                        if (uploadedPaths.isNotEmpty()) {
-                            DebugLogger.log("UPLOADER", "Batch staging complete. Successful: ${uploadedPaths.size}/${files.size}")
-                            triggerFunction(context, uploadedPaths.toList())
-                        } else {
-                            DebugLogger.log("UPLOADER", "FATAL: Zero images were successfully staged. AI trigger aborted.")
-                            val errorMsg = if (!isOnline(context)) "Internet connection lost during upload." else "Cloud storage rejected the images."
-                            notifyVoice(context, errorMsg, 2)
-                            isProcessing = false
-                        }
-                    }
-                }
-            })
         }
     }
 
