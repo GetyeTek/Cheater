@@ -642,6 +642,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun pauseAudio() {
+        if (playlists.isEmpty()) rebuildPlaylists()
+        
         val list = playlists[currentType]
         if (list.isNullOrEmpty()) {
             speakStatus("No solutions loaded to play.", 2)
@@ -650,18 +652,32 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         
         if (mediaPlayer?.isPlaying == true) {
             mediaPlayer?.pause()
+            if (::tts.isInitialized) tts.stop() // Shut up immediately
             speakStatus("Paused", 2)
             updateMediaSessionState(false)
         } else {
             speakStatus("Resumed", 2)
             if (mediaPlayer == null) {
-                // Reconstruction: The player was released or never started
                 playCurrent()
             } else {
                 mediaPlayer?.start()
                 updateMediaSessionState(true)
             }
         }
+    }
+
+    private fun rebuildPlaylists() {
+        val files = audioFolder.listFiles()?.filter { it.extension == "wav" } ?: return
+        playlists.clear()
+        files.forEach { file ->
+            val type = file.name.split("_").firstOrNull() ?: "sa"
+            playlists.getOrPut(type) { mutableListOf() }.add(file)
+        }
+        playlists.forEach { it.value.sortBy { f -> f.name } }
+        
+        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        currentType = prefs.getString("last_type", null)
+        currentIndex = prefs.getInt("last_index", 0)
     }
 
     private fun updateMediaSessionState(isPlaying: Boolean) {
@@ -722,17 +738,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun rebuildPlaylistsAndResume() {
-        val files = audioFolder.listFiles()?.filter { it.extension == "wav" } ?: return
-        playlists.clear()
-        files.forEach { file ->
-            val type = file.name.split("_").firstOrNull() ?: "sa"
-            playlists.getOrPut(type) { mutableListOf() }.add(file)
-        }
-        playlists.forEach { it.value.sortBy { f -> f.name } }
-        
-        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
-        currentType = prefs.getString("last_type", null)
-        currentIndex = prefs.getInt("last_index", 0)
+        rebuildPlaylists()
         if (currentType != null) playCurrent()
     }
 
