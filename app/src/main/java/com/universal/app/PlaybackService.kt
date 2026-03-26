@@ -350,15 +350,22 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         performDeepAudit()
     }
 
+    private var jsonRetryCount = 0
     private fun processJson(rawJson: String) {
-        // Last line of defense: check if system is active before processing new data
         val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("is_active", true)) return
 
         if (!isReady) {
-            Handler(Looper.getMainLooper()).postDelayed({ processJson(rawJson) }, 1000)
+            if (jsonRetryCount < 5) {
+                jsonRetryCount++
+                Handler(Looper.getMainLooper()).postDelayed({ processJson(rawJson) }, 1000)
+            } else {
+                jsonRetryCount = 0
+                DebugLogger.log("TTS_FATAL", "TTS Engine never became ready. Aborting JSON process.")
+            }
             return
         }
+        jsonRetryCount = 0
         try {
             // 1. Extract JSON block (handles AI conversational noise or markdown blocks)
             val firstBrace = rawJson.indexOf("{")
