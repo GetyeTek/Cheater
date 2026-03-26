@@ -120,11 +120,10 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                     val msg = ttsMessageMap[id] ?: "System notification"
                     DebugLogger.log("TTS_TRACE", "Phone is saying: '$msg'") 
                 }
-                override fun onDone(id: String?) {
+                                override fun onDone(id: String?) {
                     val msg = ttsMessageMap[id]
                     if (msg != null) ttsMessageMap.remove(id)
 
-                    // Resume Media if it was ducked/paused for a status message
                     if (id?.startsWith("STATUS_") == true && wasMediaPlayingBeforeTts) {
                         if (!tts.isSpeaking) {
                             wasMediaPlayingBeforeTts = false
@@ -143,20 +142,16 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                                     list.add(file)
                                     list.sortBy { it.name }
                                 }
-                                
-                                // AUTO-PLAY TRIGGER: If this is the FIRST file of the current type and nothing is playing
-                                if (type == currentType && list.size == 1 && (mediaPlayer == null || !mediaPlayer!!.isPlaying)) {
-                                    handler.post { 
-                                        currentIndex = 0
-                                        playCurrent() 
-                                    }
-                                }
                             }
-                            DebugLogger.log("TTS", "Ready: $id")
+                            DebugLogger.log("TTS", "File Generated: $id")
                         }
                         
                         val remaining = pendingSyntheses.decrementAndGet()
-                        if (remaining > 0) processNextInQueue() else isProcessingBatch = false
+                        if (remaining > 0) {
+                            processNextInQueue()
+                        } else {
+                            handler.post { finalizeBatch() }
+                        }
                     }
                 }
 
@@ -169,16 +164,22 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                 }
 
                 override fun onError(id: String?, errorCode: Int) {
-                    // Modern override for detailed diagnostics
                     val reason = when(errorCode) {
-                        TextToSpeech.ERROR_SYNTHESIS -> "Synthesis failed (Invalid text or engine error)"
-                        TextToSpeech.ERROR_SERVICE -> "TTS Service disconnected"
-                        TextToSpeech.ERROR_OUTPUT -> "Device storage full or write permission denied"
-                        else -> "Unknown Engine Error ($errorCode)"
+                        TextToSpeech.ERROR_SYNTHESIS -> "Malformed text"
+                        TextToSpeech.ERROR_SERVICE -> "Service disconnected"
+                        TextToSpeech.ERROR_OUTPUT -> "Storage error"
+                        else -> "Engine Error $errorCode"
                     }
                     DebugLogger.log("DIAGNOSTIC", "TTS FAILED for $id: $reason")
+                    
                     if (id != null && !id.startsWith("STATUS_")) {
-                        pendingSyntheses.decrementAndGet()
+                        val remaining = pendingSyntheses.decrementAndGet()
+                        // Fix: Keep queue moving even on failure
+                        if (remaining > 0) {
+                            processNextInQueue()
+                        } else {
+                            handler.post { finalizeBatch() }
+                        }
                     }
                 }
             })
@@ -446,8 +447,19 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
 
     private fun finalizeBatch() {
         isProcessingBatch = false
-        synchronized(playlists) { playlists.values.forEach { it.sortBy { f -> f.name } } }
-        speakStatus("All solutions generated and verified.", 1)
+        synchronized(playlists) { 
+            playlists.values.forEach { it.sortBy { f -> f.name } } 
+        }
+        
+        val type = currentType ?: "sa"
+        val count = playlists[type]?.size ?: 0
+        
+        if (count > 0) {
+            speakStatus("Batch ready. Reading $count solutions.", 2)
+            handler.postDelayed({ playType(type) }, 2000)
+        } else {
+            speakStatus("Batch processing finished, but no valid files were generated.", 2)
+        }
     }
 
 
@@ -605,7 +617,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                     }
                     setOnErrorListener { _, what, extra ->
                         DebugLogger.log("MEDIA_ERR", "MediaPlayer Error: $what / $extra")
-                        stopAllPlayback()
+                        speakStatus("Skipping unreadable solution.", 2)
+                        handler.postDelayed({ playNext() }, 1500)
                         true
                     }
                     setOnCompletionListener {
