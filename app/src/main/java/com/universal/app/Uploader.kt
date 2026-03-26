@@ -34,7 +34,18 @@ object Uploader {
         }
     }
 
+    private fun isOnline(context: Context): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val net = cm.activeNetwork ?: return false
+        val capabilities = cm.getNetworkCapabilities(net) ?: return false
+        return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
     fun enqueueFiles(context: Context, files: List<File>) {
+        if (!isOnline(context)) {
+            notifyVoice(context, "Upload failed. Your internet is down.", 2)
+            return
+        }
         if (files.isEmpty()) {
             DebugLogger.log("UPLOADER", "Abort: Enqueue called with empty list.")
             return
@@ -144,7 +155,8 @@ object Uploader {
                             triggerFunction(context, uploadedPaths.toList())
                         } else {
                             DebugLogger.log("UPLOADER", "FATAL: Zero images were successfully staged. AI trigger aborted.")
-                            notifyVoice(context, "Critical failure: Cloud storage rejected all images.", 2)
+                            val errorMsg = if (!isOnline(context)) "Internet connection lost during upload." else "Cloud storage rejected the images."
+                            notifyVoice(context, errorMsg, 2)
                             isProcessing = false
                         }
                     }
@@ -172,7 +184,8 @@ object Uploader {
                 isProcessing = false
                 watchdogHandler.removeCallbacks(watchdogRunnable)
                 DebugLogger.log("CLOUD_ERR", "Handshake FAILED: ${e.message}")
-                notifyVoice(context, "Failed to trigger analysis", 2)
+                val errorMsg = if (!isOnline(context)) "Internet is down. Handshake failed." else "Failed to trigger analysis."
+                notifyVoice(context, errorMsg, 2)
             }
 
             override fun onResponse(call: Call, response: Response) {
