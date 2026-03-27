@@ -677,12 +677,12 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             playlists.getOrPut(type) { mutableListOf() }.add(file)
         }
         // Sort by batch timestamp first, then by the numeric sequence number
-        playlists.forEach { it.value.sortBy { f -> 
-            val parts = f.name.split('_')
-            val timestamp = parts.getOrNull(1)?.toLongOrNull() ?: 0L
-            val seq = parts.getOrNull(2)?.substringBefore('.')?.filter { c -> c.isDigit() }?.toIntOrNull() ?: 0
-            timestamp to seq
-        } }
+        playlists.forEach { entry ->
+            entry.value.sortWith(compareBy(
+                { f -> f.name.split('_').getOrNull(1)?.toLongOrNull() ?: 0L },
+                { f -> f.name.split('_').getOrNull(2)?.substringBefore('.')?.filter { it.isDigit() }?.toIntOrNull() ?: 0 }
+            ))
+        }
         
         val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
         currentType = prefs.getString("last_type", null)
