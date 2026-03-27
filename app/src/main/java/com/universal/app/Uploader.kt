@@ -185,8 +185,7 @@ object Uploader {
                 } else {
                     DebugLogger.log("CLOUD_ERR", "Edge Function Error (Code: $code): $bodyStr")
                     if (code == 422 || bodyStr.contains("low_quality")) {
-                        notifyVoice(context, "Image quality too low. Process discarded. Resetting.", 2)
-                        context.startService(Intent(context, PlaybackService::class.java).apply { action = "RESET" })
+                        notifyVoice(context, "Image quality too low. Analysis discarded.", 2)
                     } else {
                         notifyVoice(context, "Cloud analysis error. Check trace.", 2)
                     }
@@ -254,13 +253,10 @@ object Uploader {
                                 val status = record?.optString("status")
 
                                 if (status == "low_quality") {
-                                    DebugLogger.log("POLL", "Worker reported LOW QUALITY for $id. Resetting.")
+                                    DebugLogger.log("POLL", "Worker reported LOW QUALITY for $id.")
                                     context.getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
                                         .edit().remove("active_cloud_process_id").apply()
-                                    context.startService(Intent(context, PlaybackService::class.java).apply {
-                                        action = "RESET"
-                                        putExtra("reason", "Image quality too low.")
-                                    })
+                                    notifyVoice(context, "Image quality too low to process.", 2)
                                     activePolls.remove(id)
                                     return
                                 }
@@ -269,10 +265,7 @@ object Uploader {
                                     DebugLogger.log("POLL", "Worker reported FATAL ERROR for $id.")
                                     context.getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
                                         .edit().remove("active_cloud_process_id").apply()
-                                    context.startService(Intent(context, PlaybackService::class.java).apply {
-                                        action = "RESET"
-                                        putExtra("reason", "Cloud analysis failed.")
-                                    })
+                                    notifyVoice(context, "Cloud analysis failed.", 2)
                                     activePolls.remove(id)
                                     return
                                 }
