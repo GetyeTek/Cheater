@@ -140,7 +140,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                                 val list = playlists.getOrPut(type) { mutableListOf() }
                                 if (!list.contains(file)) {
                                     list.add(file)
-                                    list.sortBy { it.name }
+                                    // Sort by the numeric part at the end of the filename (e.g., _001.wav)
+                                    list.sortBy { it.name.substringAfterLast('_').substringBefore('.').filter { c -> c.isDigit() }.toIntOrNull() ?: 0 }
                                 }
                             }
                             DebugLogger.log("TTS", "File Generated: $id")
@@ -673,7 +674,13 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             val type = file.name.split("_").firstOrNull() ?: "sa"
             playlists.getOrPut(type) { mutableListOf() }.add(file)
         }
-        playlists.forEach { it.value.sortBy { f -> f.name } }
+        // Sort by batch timestamp first, then by the numeric sequence number
+        playlists.forEach { it.value.sortBy { f -> 
+            val parts = f.name.split('_')
+            val timestamp = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+            val seq = parts.getOrNull(2)?.substringBefore('.')?.filter { c -> c.isDigit() }?.toIntOrNull() ?: 0
+            timestamp to seq
+        } }
         
         val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
         currentType = prefs.getString("last_type", null)
