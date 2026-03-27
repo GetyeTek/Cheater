@@ -524,14 +524,14 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             if (isProcessingBatch) {
                 speakStatus("Waiting for next answer...", 1)
             } else {
-                // End of category reached: Advance to next category automatically
-                DebugLogger.log("NAV", "End of $type reached. Advancing to next category.")
-                playNextCategory()
+                currentIndex = 0
+                speakStatus("End of list. Restarting from one.", 2)
+                savePlaybackState()
+                handler.postDelayed({ playCurrent() }, 1500)
             }
         } else {
             currentIndex++
             speakStatus("Next solution", 2)
-            DebugLogger.log("NAV", "Next: Index $currentIndex of ${list.size}")
             savePlaybackState()
             handler.postDelayed({ playCurrent() }, 1500)
         }
@@ -547,7 +547,9 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         }
         
         if (types.size <= 1) {
-            speakStatus("No other categories found", 2)
+            speakStatus("Only one category available. Restarting.", 2)
+            currentIndex = 0
+            savePlaybackState()
             handler.postDelayed({ playCurrent() }, 1500)
             return
         }
