@@ -279,6 +279,9 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         if (prefs.getBoolean("headset_only", true) && !hasHeadset) return
         if (!isReady) return
 
+        // Standardize rate for system notifications
+        tts.setSpeechRate(0.9f)
+
         // Priority 0 (Low): Discard if TTS is already speaking to prevent overlap
         if (priority == 0 && tts.isSpeaking) {
             DebugLogger.log("TTS_CHATTER", "Discarded low-priority message: $message")
@@ -433,6 +436,10 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         if (synthesisQueue.isEmpty()) return
         val (text, file) = synthesisQueue.poll() ?: return
         val utteranceId = file.name
+
+        // Dynamic Rate: Slow down worked-out solutions (wo) for better clarity
+        val isWorkout = utteranceId.startsWith("wo_")
+        tts.setSpeechRate(if (isWorkout) 0.75f else 0.9f)
         
         val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId) }
         val result = tts.synthesizeToFile(text, params, file, utteranceId)
