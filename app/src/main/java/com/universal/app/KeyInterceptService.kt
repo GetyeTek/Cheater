@@ -118,12 +118,15 @@ class KeyInterceptService : AccessibilityService() {
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
         val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
-        // Absolute first check - if inactive, pass through immediately
-        if (!prefs.getBoolean("is_active", true)) return false
+        val isActive = prefs.getBoolean("is_active", true)
+        val isShieldUp = blockerOverlay != null
+
+        // Absolute first check - if inactive and shield is down, pass through immediately
+        if (!isActive && !isShieldUp) return false
 
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         val isScreenOn = pm.isInteractive
-        if (!prefs.getBoolean("keys_enabled", true)) return false
+        if (!prefs.getBoolean("keys_enabled", true) && !isShieldUp) return false
 
         val keyCode = event.keyCode
         val action = event.action
@@ -134,19 +137,8 @@ class KeyInterceptService : AccessibilityService() {
         val pkg = root?.packageName?.toString() ?: ""
         val isCamOpen = pkg.contains("camera") || pkg.contains("lens")
 
-        if (isCamOpen && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
-            // --- Emergency Blocker Removal (Priority 1) ---
-            if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && action == KeyEvent.ACTION_UP) {
-                val now = System.currentTimeMillis()
-                if (now - lastUpTime < 400 && blockerOverlay != null) {
-                    DebugLogger.log("BLOCKER", "Emergency Removal via VolUp Double-Tap")
-                    removeTouchBlocker()
-                    return true // Consume to prevent shutter on emergency exit
-                }
-                lastUpTime = now
-                // Fall through to check for shutter action
-            }
-
+        // If the shield is UP, we bypass camera logic entirely so emergency volume key holds can function.
+        if (isCamOpen && !isShieldUp && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
             // --- Shutter Trigger (Priority 2) ---
             if (action == KeyEvent.ACTION_UP) {
                 DebugLogger.log("SHUTTER", "Camera context: Intercepting volume key for capture.")
@@ -759,11 +751,14 @@ class KeyInterceptService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        val isActive = prefs.getBoolean("is_active", true)
         val shouldBlock = prefs.getBoolean("touch_blocker", false)
 
-        // 1. Enforce Global Blocker Policy
-        if (shouldBlock && blockerOverlay == null) {
+        // 1. Enforce Global Blocker Policy securely
+        if (isActive && shouldBlock && blockerOverlay == null) {
             showTouchBlocker()
+        } else if ((!isActive || !shouldBlock) && blockerOverlay != null) {
+            removeTouchBlocker()
         }
 
         val type = event?.eventType
