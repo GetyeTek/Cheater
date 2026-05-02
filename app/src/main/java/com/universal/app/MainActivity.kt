@@ -125,7 +125,11 @@ fun AppDashboard() {
                 StatusHeroCard(isSystemActive, hasPermission) { isActive ->
                     isSystemActive = isActive
                     // Use commit() to ensure the background service sees the change immediately
-                    prefs.edit().putBoolean("is_active", isActive).commit()
+                    val editor = prefs.edit()
+                    editor.putBoolean("is_active", isActive)
+                    if (!isActive) editor.putBoolean("touch_blocker", false)
+                    editor.commit()
+                    
                     if (!isActive) {
                         context.stopService(Intent(context, ImageMonitorService::class.java))
                         context.stopService(Intent(context, PlaybackService::class.java))
