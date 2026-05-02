@@ -171,7 +171,14 @@ fun AppDashboard() {
 
                         SettingsToggle("Intercept Media Keys", keysEnabled) { prefs.edit().putBoolean("keys_enabled", it).apply() }
                         SettingsToggle("Headset Shutter", headsetTrigger) { prefs.edit().putBoolean("headset_trigger", it).apply() }
-                        SettingsToggle("Global Touch Blocker (Block Everything)", touchBlocker) { prefs.edit().putBoolean("touch_blocker", it).apply() }
+                        SettingsToggle("Global Touch Blocker (Block Everything)", touchBlocker) { 
+                            prefs.edit().putBoolean("touch_blocker", it).apply()
+                            // Safety Logic: If blocker is enabled, hardware keys MUST be intercepted to allow emergency exit
+                            if (it && !keysEnabled.value) {
+                                keysEnabled.value = true
+                                prefs.edit().putBoolean("keys_enabled", true).apply()
+                            }
+                        }
                         
                         val successiveEnabled = remember { mutableStateOf(prefs.getBoolean("successive_enabled", false)) }
                         val successiveCount = remember { mutableStateOf(prefs.getInt("successive_count", 3)) }
