@@ -55,16 +55,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
     private var currentType: String? = null
     private var currentIndex = 0
 
-    private fun enforceEarphoneMaxVolume() {
-        val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-        val isEarphones = am.isWiredHeadsetOn || am.isBluetoothA2dpOn
-        
-        if (isEarphones) {
-            val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-            am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, maxVol, 0)
-            DebugLogger.log("AUDIO_FORCE", "Earphones detected. Volume set to 100% ($maxVol)")
-        }
-    }
+
     private val playlists = mutableMapOf<String, MutableList<File>>()
     
     private val handler = Handler(Looper.getMainLooper())
@@ -299,8 +290,6 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             wasMediaPlayingBeforeTts = true
             mediaPlayer?.pause()
         }
-
-        enforceEarphoneMaxVolume()
 
         val id = "STATUS_${priority}_${System.currentTimeMillis()}"
         ttsMessageMap[id] = message
@@ -621,7 +610,6 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                     prepareAsync()
                     setOnPreparedListener { 
                         DebugLogger.log("MEDIA", "Starting Playback: ${file.name}")
-                        enforceEarphoneMaxVolume()
                         setVolume(1.0f, 1.0f)
                         start() 
                     }
@@ -1075,7 +1063,6 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                     .build())
                 
                 newPlayer.setOnPreparedListener { 
-                    enforceEarphoneMaxVolume()
                     it.setVolume(1.0f, 1.0f)
                     it.start()
                     updateMediaSessionState(true)
