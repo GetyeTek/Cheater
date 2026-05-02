@@ -25,6 +25,7 @@ import java.util.LinkedList
 
 class KeyInterceptService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
+    private val windowLock = Any()
     private var blockerOverlay: View? = null
     private var lastHeadsetClick = 0L
     private var gestureSequence = ""
@@ -88,17 +89,22 @@ class KeyInterceptService : AccessibilityService() {
     
     private val volDownBatchRunnable = Runnable {
         isLongPressTriggered = true
-        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("touch_blocker", false)) {
-            prefs.edit().putBoolean("touch_blocker", false).apply()
+        
+        // EMERGENCY OVERRIDE: Check the physical view existence, not just preferences
+        if (blockerOverlay != null) {
+            val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("touch_blocker", false).commit()
             removeTouchBlocker()
-            speak("Emergency unlock: Touch restored", true)
-        } else {
-            // Fallback: If blocker wasn't on, we can still use this for batch upload
-            speak("Initiating batch upload", true)
-            val intent = Intent(this@KeyInterceptService, ImageMonitorService::class.java).apply { action = "COMMAND_FLUSH_BATCH" }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+            speak("Emergency Unlock Success: Touch Restored", true)
+            pulse()
+            pulse()
+            return@Runnable
         }
+
+        // Standard Batch logic if no block active
+        speak("Initiating batch upload", true)
+        val intent = Intent(this@KeyInterceptService, ImageMonitorService::class.java).apply { action = "COMMAND_FLUSH_BATCH" }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
     }
 
     private val volUpLongPressRunnable = Runnable {
@@ -321,42 +327,51 @@ class KeyInterceptService : AccessibilityService() {
     }
 
     private fun showTouchBlocker() {
-        if (blockerOverlay != null) return
-        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        blockerOverlay = View(this).apply {
-            setBackgroundColor(Color.TRANSPARENT)
-            setOnTouchListener { _, _ -> true }
-        }
+        synchronized(windowLock) {
+            if (blockerOverlay != null) return
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val overlay = View(this).apply {
+                setBackgroundColor(Color.TRANSPARENT)
+                setOnTouchListener { _, _ -> true }
+            }
 
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR or
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = android.view.Gravity.TOP
-            // Full screen coverage including status bar and navigation area
-            height = WindowManager.LayoutParams.MATCH_PARENT
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = android.view.Gravity.TOP
+                height = WindowManager.LayoutParams.MATCH_PARENT
+            }
+            
+            try {
+                wm.addView(overlay, params)
+                blockerOverlay = overlay
+                DebugLogger.log("BLOCKER", "Shield Deployed")
+            } catch (e: Exception) {
+                DebugLogger.log("BLOCKER", "Deploy Error: ${e.message}")
+                blockerOverlay = null
+            }
         }
-        
-        try {
-            wm.addView(blockerOverlay, params)
-            DebugLogger.log("BLOCKER", "Global Touch Blocker Active")
-        } catch (e: Exception) { DebugLogger.log("BLOCKER", "Error: ${e.message}") }
     }
 
     private fun removeTouchBlocker() {
-        blockerOverlay?.let {
-            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            try { 
-                wm.removeView(it) 
-            } catch (e: Exception) {}
-            blockerOverlay = null
-            DebugLogger.log("BLOCKER", "Touch Blocker Removed")
+        synchronized(windowLock) {
+            blockerOverlay?.let {
+                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                try { 
+                    wm.removeView(it) 
+                    DebugLogger.log("BLOCKER", "Shield Removed")
+                } catch (e: Exception) {
+                    DebugLogger.log("BLOCKER", "Removal Error: ${e.message}")
+                } finally {
+                    blockerOverlay = null
+                }
+            }
         }
     }
 
