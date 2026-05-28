@@ -17,8 +17,8 @@ import java.io.File
 
 class ImageMonitorService : Service() {
     private val CHANNEL_ID = "ImageMonitorChannel"
-    private val SUPABASE_URL = "https://xvldfsmxskhemkslsbym.supabase.co/functions/v1/upload-image"
-    private val SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2bGRmc214c2toZW1rc2xzYnltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2ODgxNzksImV4cCI6MjA3ODI2NDE3OX0.5arqrx8Tt7v-hpXpo_ncoK4IX8th9IibxAuv93SSoOU"
+    private val SUPABASE_URL = SupabaseConfig.FUNCTION_URL
+    private val SUPABASE_KEY = SupabaseConfig.ANON_KEY
     
     private lateinit var observer: ContentObserver
 
