@@ -22,8 +22,8 @@ object Uploader {
         .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
         .build()
     
-    private const val SUPABASE_URL = "https://xvldfsmxskhemkslsbym.supabase.co/functions/v1/upload-image"
-    private const val SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2bGRmc214c2toZW1rc2xzYnltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2ODgxNzksImV4cCI6MjA3ODI2NDE3OX0.5arqrx8Tt7v-hpXpo_ncoK4IX8th9IibxAuv93SSoOU"
+    private val SUPABASE_URL = SupabaseConfig.FUNCTION_URL
+    private val SUPABASE_KEY = SupabaseConfig.ANON_KEY
 
     private var isProcessing = false
     private val watchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -113,7 +113,7 @@ object Uploader {
 
         files.forEach { file ->
             val pathInBucket = "$batchId/${file.name}"
-            val targetUrl = "https://xvldfsmxskhemkslsbym.supabase.co/storage/v1/object/images/$pathInBucket"
+            val targetUrl = "${SupabaseConfig.STORAGE_URL}$pathInBucket"
             val request = Request.Builder()
                 .url(targetUrl)
                 .addHeader("Authorization", "Bearer $SUPABASE_KEY")
@@ -212,7 +212,7 @@ object Uploader {
         val localVersion = globalSessionVersion
         
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        val url = "https://xvldfsmxskhemkslsbym.supabase.co/rest/v1/processed_images?id=eq.$id&select=status,solution_json"
+        val url = "${SupabaseConfig.REST_URL}?id=eq.$id&select=status,solution_json"
         
         val pollRunnable = object : Runnable {
             val self = this
