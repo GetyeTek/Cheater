@@ -520,10 +520,14 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             if (isProcessingBatch) {
                 speakStatus("Waiting for next answer...", 1)
             } else {
-                currentIndex = 0
-                speakStatus("End of list. Restarting from one.", 2)
-                savePlaybackState()
-                handler.postDelayed({ playCurrent() }, 1500)
+                if (playlists.size > 1) {
+                    playNextCategory()
+                } else {
+                    currentIndex = 0
+                    speakStatus("End of list. Restarting from one.", 2)
+                    savePlaybackState()
+                    handler.postDelayed({ playCurrent() }, 1500)
+                }
             }
         } else {
             currentIndex++
