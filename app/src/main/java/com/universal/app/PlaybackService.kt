@@ -54,7 +54,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
 
     private var currentType: String? = null
     private var currentIndex = 0
-
+    private var isExplicitlyPaused = false
 
     private val playlists = mutableMapOf<String, MutableList<File>>()
     
@@ -490,6 +490,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
 
     private fun playType(type: String) {
         DebugLogger.log("NAV", "Switching to category: $type")
+        isExplicitlyPaused = false
         stopAllPlayback()
         val list = playlists[type]
         
@@ -517,6 +518,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun playNext() {
+        isExplicitlyPaused = false
         val type = currentType
         val list = playlists[type]
 
@@ -572,6 +574,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun playPrevious() {
+        isExplicitlyPaused = false
         val type = currentType
         val list = playlists[type]
 
@@ -665,12 +668,15 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             return
         }
         
-        if (mediaPlayer?.isPlaying == true) {
+        if (!isExplicitlyPaused) {
+            isExplicitlyPaused = true
+            autoNextRunnable?.let { handler.removeCallbacks(it) } // Cancel any pending step delays
             mediaPlayer?.pause()
             if (::tts.isInitialized) tts.stop() // Shut up immediately
             speakStatus("Paused", 2)
             updateMediaSessionState(false)
         } else {
+            isExplicitlyPaused = false
             speakStatus("Resumed", 2)
             if (mediaPlayer == null) {
                 playCurrent()
@@ -719,12 +725,17 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
 
     private fun resetEverything(intent: Intent? = null) {
         // 1. Kill Timers and Media
+        autoNextRunnable?.let { handler.removeCallbacks(it) }
         autoPlayRunnable?.let { autoPlayHandler.removeCallbacks(it) }
         handler.removeCallbacksAndMessages(null)
         isProcessingBatch = false
+        isExplicitlyPaused = false
         pendingSyntheses.set(0)
-        mediaPlayer?.stop()
+        
+        stopAllPlayback() // Properly destroys the player and prevents orphans
         playlists.clear()
+        currentType = null
+        currentIndex = 0
 
         // 2. Wipe Uploader Memory & Stop Polling
         Uploader.clearQueue()
@@ -742,10 +753,12 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             DebugLogger.log("RESET", "Pending image queue cleared.")
         }
 
-        // 5. Reset Anchor Point and Cloud IDs
+        // 5. Reset Anchor Point, Cloud IDs, and wipe Playback State
         getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE).edit()
             .putBoolean("first_image_anchored", false)
             .remove("active_cloud_process_id")
+            .remove("last_type")
+            .remove("last_index")
             .apply()
 
         updateNotification("System Standby", "Session data cleared.")
