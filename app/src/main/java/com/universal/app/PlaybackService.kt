@@ -471,6 +471,10 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         val count = playlists[type]?.size ?: 0
         
         if (count > 0) {
+            // Auto-activate Earphone Navigation for Study Mode
+            getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean("earphone_nav_mode", true).apply()
+                
             speakStatus("Batch ready. Reading $count solutions.", 2)
             handler.postDelayed({ playType(type) }, 2000)
         } else {
@@ -753,12 +757,13 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             DebugLogger.log("RESET", "Pending image queue cleared.")
         }
 
-        // 5. Reset Anchor Point, Cloud IDs, and wipe Playback State
+        // 5. Reset Anchor Point, Cloud IDs, wipe Playback State, and Exit Study Mode
         getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE).edit()
             .putBoolean("first_image_anchored", false)
             .remove("active_cloud_process_id")
             .remove("last_type")
             .remove("last_index")
+            .putBoolean("earphone_nav_mode", false)
             .apply()
 
         updateNotification("System Standby", "Session data cleared.")
