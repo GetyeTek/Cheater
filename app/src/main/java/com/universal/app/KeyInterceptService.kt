@@ -587,6 +587,12 @@ class KeyInterceptService : AccessibilityService() {
             val total = prefs.getInt("successive_count", 3)
             DebugLogger.log("AUTO", "Batch complete. Closing camera automatically.")
             
+            // Direct Speech Notification for programmatic auto-close
+            val queueDir = File(cacheDir, "pending_uploads")
+            val count = queueDir.listFiles()?.size ?: 0
+            val countText = if (count == 1) "1 image queued" else "$count images queued"
+            speak("Camera closed. $countText.", false)
+
             // Auto-close sequence: Return to home and clear session states
             isInCameraSession = false // Set false BEFORE home action to prevent redundant event trigger
             performGlobalAction(GLOBAL_ACTION_HOME)
