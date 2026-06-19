@@ -61,6 +61,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
     private val handler = Handler(Looper.getMainLooper())
     private val autoPlayHandler = Handler(Looper.getMainLooper())
     private var autoPlayRunnable: Runnable? = null
+    private var autoNextRunnable: Runnable? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -246,6 +247,7 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
 
     private fun stopMediaOnly() {
         synchronized(this) {
+            autoNextRunnable?.let { handler.removeCallbacks(it) }
             mediaPlayer?.let {
                 try {
                     if (it.isPlaying) it.stop()
@@ -403,25 +405,35 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                 val rawNum = item.optString("number", (i + 1).toString())
                 val number = rawNum.padStart(3, '0')
                 
-                val stepsArray = item.optJSONArray("steps")
-                val stepsBuilder = StringBuilder()
-                if (stepsArray != null) {
-                    for (j in 0 until stepsArray.length()) { stepsBuilder.append(stepsArray.optString(j)).append(". ") }
-                }
-                
                 val typeName = when(type) { 
                     "wo" -> "Worked out solution"; "tf" -> "True or False"; "mc" -> "Multiple Choice"; 
                     "ma" -> "Matching"; "fill" -> "Fill in the blank"; else -> "Question" 
                 }
                 
-                var speech = if (type == "wo") "$typeName $rawNum. ${stepsBuilder} Final answer: ${item.optString("answer")}" 
-                             else "$typeName $rawNum. Answer: ${item.optString("answer")}"
-
-                // Heavy Sanitization for TTS stability
-                speech = speech.replace(Regex("[^a-zA-Z0-9.,!?;: ]"), " ").replace("\\s+".toRegex(), " ").trim()
-
-                val file = File(audioFolder, "${type}_${batchId}_${number}.wav")
-                synthesisQueue.add(speech to file)
+                if (type == "wo") {
+                    val stepsArray = item.optJSONArray("steps")
+                    if (stepsArray != null && stepsArray.length() > 0) {
+                        for (j in 0 until stepsArray.length()) {
+                            val stepNum = (j + 1).toString().padStart(3, '0')
+                            val stepText = stepsArray.optString(j)
+                            val cleanStep = stepText.replace(Regex("[^a-zA-Z0-9.,!?;: ]"), " ").replace("\\s+".toRegex(), " ").trim()
+                            
+                            val speech = "Question $rawNum. $cleanStep. I repeat. $cleanStep. Once more. $cleanStep."
+                            val file = File(audioFolder, "${type}_${batchId}_${number}_${stepNum}.wav")
+                            synthesisQueue.add(speech to file)
+                        }
+                    } else {
+                        val ans = item.optString("answer").replace(Regex("[^a-zA-Z0-9.,!?;: ]"), " ").replace("\\s+".toRegex(), " ").trim()
+                        val speech = "Question $rawNum. $ans. I repeat. $ans. Once more. $ans."
+                        val file = File(audioFolder, "${type}_${batchId}_${number}_001.wav")
+                        synthesisQueue.add(speech to file)
+                    }
+                } else {
+                    var speech = "$typeName $rawNum. Answer: ${item.optString("answer")}"
+                    speech = speech.replace(Regex("[^a-zA-Z0-9.,!?;: ]"), " ").replace("\\s+".toRegex(), " ").trim()
+                    val file = File(audioFolder, "${type}_${batchId}_${number}.wav")
+                    synthesisQueue.add(speech to file)
+                }
             }
 
             pendingSyntheses.set(synthesisQueue.size)
@@ -632,8 +644,9 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                     }
                     setOnCompletionListener {
                         DebugLogger.log("MEDIA", "Playback finished for ${file.name}")
-                        // Mandatory delay to prevent rapid-fire loops
-                        handler.postDelayed({ playNext() }, 1000)
+                        autoNextRunnable = Runnable { playNext() }
+                        val delay = if (currentType == "wo") 5000L else 1000L
+                        handler.postDelayed(autoNextRunnable!!, delay)
                     }
                 }
             }
@@ -679,7 +692,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         playlists.forEach { entry ->
             entry.value.sortWith(compareBy(
                 { f -> f.name.split('_').getOrNull(1)?.toLongOrNull() ?: 0L },
-                { f -> f.name.split('_').getOrNull(2)?.substringBefore('.')?.filter { it.isDigit() }?.toIntOrNull() ?: 0 }
+                { f -> f.name.split('_').getOrNull(2)?.substringBefore('.')?.filter { it.isDigit() }?.toIntOrNull() ?: 0 },
+                { f -> f.name.split('_').getOrNull(3)?.substringBefore('.')?.filter { it.isDigit() }?.toIntOrNull() ?: 0 }
             ))
         }
         
