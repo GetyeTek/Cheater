@@ -73,7 +73,7 @@ class KeyInterceptService : AccessibilityService() {
         }
         cameraExitPending = false
     }
-    private var isEarphoneNavMode = false
+    // isEarphoneNavMode is now centrally managed via SharedPreferences
     private var isLongPressTriggered = false
     private var successiveRemaining = 0
 
@@ -108,13 +108,16 @@ class KeyInterceptService : AccessibilityService() {
     }
 
     private val volUpLongPressRunnable = Runnable {
-        isEarphoneNavMode = !isEarphoneNavMode
+        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        val newMode = !prefs.getBoolean("earphone_nav_mode", false)
+        prefs.edit().putBoolean("earphone_nav_mode", newMode).apply()
+        
         isLongPressTriggered = true
-        val status = if (isEarphoneNavMode) "Earphone Navigation Activated" else "Earphone Navigation Deactivated"
+        val status = if (newMode) "Earphone Navigation Activated" else "Earphone Navigation Deactivated"
         DebugLogger.log("MODE", status)
         speak(status, true)
         
-        if (isEarphoneNavMode) {
+        if (newMode) {
             val intent = Intent(this@KeyInterceptService, PlaybackService::class.java).apply {
                 action = "START_NAV"
             }
@@ -650,7 +653,10 @@ class KeyInterceptService : AccessibilityService() {
 
     private fun processHeadsetGesture(sequence: String) {
         if (sequence.isEmpty()) return
-        DebugLogger.log("HEADSET_SIG", "Evaluating sequence: '$sequence' | NavMode: $isEarphoneNavMode")
+        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        val isNavMode = prefs.getBoolean("earphone_nav_mode", false)
+        
+        DebugLogger.log("HEADSET_SIG", "Evaluating sequence: '$sequence' | NavMode: $isNavMode")
         val intent = Intent(this, PlaybackService::class.java)
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         
@@ -694,7 +700,7 @@ class KeyInterceptService : AccessibilityService() {
 
         // --- MODE SPECIFIC COMMANDS ---
 
-        if (isEarphoneNavMode) {
+        if (isNavMode) {
             when (sequence) {
                 "S" -> intent.action = "PAUSE"
                 "SS" -> intent.action = "NEXT"
@@ -734,7 +740,7 @@ class KeyInterceptService : AccessibilityService() {
             }
         }
         
-        DebugLogger.log("HEADSET_NAV", "Mode: $isEarphoneNavMode, Seq: $sequence")
+        DebugLogger.log("HEADSET_NAV", "Mode: $isNavMode, Seq: $sequence")
     }
 
     private fun logUiHierarchy() {
