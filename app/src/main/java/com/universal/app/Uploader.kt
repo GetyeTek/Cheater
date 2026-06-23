@@ -85,61 +85,148 @@ object Uploader {
         }.start()
     }
 
-    private fun executeBatchUpload(context: Context, files: List<File>) {
-        val batchId = "batch_${System.currentTimeMillis()}"
-        val uploadedPaths = java.util.Collections.synchronizedList(mutableListOf<String>())
-        val finishedCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private fun compressImageFile(context: Context, file: File): File {
+        try {
+            val options = android.graphics.BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+            val origWidth = options.outWidth
+            val origHeight = options.outHeight
 
-        fun checkAllFinished() {
-            val current = finishedCount.incrementAndGet()
-            DebugLogger.log("UPLOADER", "Progress: $current/${files.size} requests finished.")
-            
-            if (current == files.size) {
-                if (uploadedPaths.isNotEmpty()) {
-                    DebugLogger.log("UPLOADER", "Batch staging complete. Successful: ${uploadedPaths.size}/${files.size}")
-                    triggerFunction(context, uploadedPaths.toList())
+            if (origWidth <= 0 || origHeight <= 0) return file
+
+            val maxDim = 2540
+            var targetWidth = origWidth
+            var targetHeight = origHeight
+            var needsRescale = false
+
+            if (origWidth > maxDim || origHeight > maxDim) {
+                needsRescale = true
+                if (origWidth > origHeight) {
+                    targetWidth = maxDim
+                    targetHeight = (origHeight * (maxDim.toFloat() / origWidth)).toInt()
                 } else {
-                    DebugLogger.log("UPLOADER", "FATAL: Zero images staged. AI aborted.")
-                    val errorMsg = if (!isOnline(context)) "Internet lost during upload." else "Storage rejected all images."
-                    notifyVoice(context, errorMsg, 2)
-                    isProcessing = false
-                    watchdogHandler.removeCallbacks(watchdogRunnable)
+                    targetHeight = maxDim
+                    targetWidth = (origWidth * (maxDim.toFloat() / origHeight)).toInt()
                 }
             }
+
+            var inSampleSize = 1
+            if (origWidth > targetWidth || origHeight > targetHeight) {
+                val halfWidth = origWidth / 2
+                val halfHeight = origHeight / 2
+                while ((halfWidth / inSampleSize) >= targetWidth && (halfHeight / inSampleSize) >= targetHeight) {
+                    inSampleSize *= 2
+                }
+            }
+
+            val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+            }
+            var bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOptions) ?: return file
+
+            if (needsRescale && (bitmap.width != targetWidth || bitmap.height != targetHeight)) {
+                val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+                if (scaledBitmap != bitmap) {
+                    bitmap.recycle()
+                    bitmap = scaledBitmap
+                }
+            }
+
+            val compressedFile = File(context.cacheDir, "comp_${System.currentTimeMillis()}_${file.name}")
+            java.io.FileOutputStream(compressedFile).use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+            }
+            bitmap.recycle()
+
+            if (compressedFile.exists() && compressedFile.length() < file.length()) {
+                DebugLogger.log("COMPRESS", "Success: ${file.name} (${file.length()/1024}KB) -> (${compressedFile.length()/1024}KB) [${origWidth}x${origHeight} to ${targetWidth}x${targetHeight}]")
+                return compressedFile
+            } else {
+                if (compressedFile.exists()) compressedFile.delete()
+                DebugLogger.log("COMPRESS", "Fallback: Original size is smaller, preserving exact bytes.")
+                return file
+            }
+        } catch (e: Exception) {
+            DebugLogger.log("COMPRESS_ERR", "Failed compression of ${file.name}: ${e.message}. Using original.")
+            return file
         }
+    }
+
+    private fun executeBatchUpload(context: Context, files: List<File>) {
+        val batchId = "batch_${System.currentTimeMillis()}"
+        val uploadedPaths = mutableListOf<String>()
 
         DebugLogger.log("UPLOADER", "Assigned Batch ID: $batchId")
 
-        files.forEach { file ->
+        // Pre-compress all files sequentially on our background thread first
+        val optimizedFiles = files.map { file ->
+            compressImageFile(context, file)
+        }
+
+        // Upload them sequentially
+        for (i in optimizedFiles.indices) {
+            val file = optimizedFiles[i]
             val pathInBucket = "$batchId/${file.name}"
             val targetUrl = "${SupabaseConfig.STORAGE_URL}$pathInBucket"
+            
+            var success = false
+            var retryCount = 0
+            val maxRetries = 2
+
             val request = Request.Builder()
                 .url(targetUrl)
                 .addHeader("Authorization", "Bearer $SUPABASE_KEY")
                 .put(file.asRequestBody("image/jpeg".toMediaTypeOrNull()))
                 .build()
 
-            try {
-                client.newCall(request).enqueue(object : Callback {
-                    override fun onFailure(call: Call, e: IOException) {
-                        DebugLogger.log("NETWORK_ERR", "Failed ${file.name}: ${e.message}")
-                        checkAllFinished()
-                    }
-                    override fun onResponse(call: Call, response: Response) {
+            while (!success && retryCount <= maxRetries) {
+                if (!isOnline(context)) {
+                    DebugLogger.log("UPLOADER", "Internet lost during upload loop.")
+                    break
+                }
+                try {
+                    DebugLogger.log("UPLOADER", "Uploading [${i + 1}/${optimizedFiles.size}]: ${file.name} (Attempt ${retryCount + 1})")
+                    client.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
                             uploadedPaths.add(pathInBucket)
+                            success = true
                             DebugLogger.log("STORAGE", "SUCCESS: ${file.name}")
                         } else {
                             DebugLogger.log("STORAGE_ERR", "REJECTED: ${file.name} (Code: ${response.code})")
+                            retryCount++
                         }
-                        response.close()
-                        checkAllFinished()
                     }
-                })
-            } catch (e: Exception) {
-                DebugLogger.log("NETWORK_CRITICAL", "Enqueue error: ${e.message}")
-                checkAllFinished()
+                } catch (e: IOException) {
+                    DebugLogger.log("NETWORK_ERR", "Failed attempt ${retryCount + 1} for ${file.name}: ${e.message}")
+                    retryCount++
+                    if (retryCount <= maxRetries) {
+                        try { Thread.sleep(1000) } catch (ignored: InterruptedException) {}
+                    }
+                }
             }
+
+            // Cleanup ONLY temporary compressed files, NEVER touch original files in the files list!
+            if (file != files[i]) {
+                try {
+                    file.delete()
+                } catch (e: Exception) {
+                    DebugLogger.log("CLEANUP_ERR", "Failed to delete temp compressed file: ${e.message}")
+                }
+            }
+        }
+
+        // Evaluation
+        if (uploadedPaths.isNotEmpty()) {
+            DebugLogger.log("UPLOADER", "Batch staging complete. Successful: ${uploadedPaths.size}/${optimizedFiles.size}")
+            triggerFunction(context, uploadedPaths.toList())
+        } else {
+            DebugLogger.log("UPLOADER", "FATAL: Zero images staged. AI aborted.")
+            val errorMsg = if (!isOnline(context)) "Internet lost during upload." else "Storage rejected all images."
+            notifyVoice(context, errorMsg, 2)
+            isProcessing = false
+            watchdogHandler.removeCallbacks(watchdogRunnable)
         }
     }
 
