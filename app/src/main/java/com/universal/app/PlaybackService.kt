@@ -23,19 +23,32 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
             if (!prefs.getBoolean("is_active", true)) return
 
-            when (intent?.action) {
-                Intent.ACTION_SCREEN_OFF -> {
-                    speakStatus("Display deactivated", 2)
+                            when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        speakStatus("Display deactivated", 2)
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+                        speakStatus("The time is $time", 2)
+                    }
+                    android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
+                        DebugLogger.log("STEALTH", "Headset unplugged! Emergency Audio Kill-switch engaged.")
+                        stopAllPlayback()
+                    }
+                    Intent.ACTION_HEADSET_PLUG -> {
+                        if (intent.getIntExtra("state", -1) == 1) {
+                            DebugLogger.log("VOLUME", "Wired headset plugged in. Checking volume floor...")
+                            enforceMinimumEarphoneVolume(announce = true)
+                        }
+                    }
+                    android.bluetooth.BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
+                        val state = intent.getIntExtra(android.bluetooth.BluetoothProfile.EXTRA_STATE, -1)
+                        if (state == android.bluetooth.BluetoothProfile.STATE_CONNECTED) {
+                            DebugLogger.log("VOLUME", "Bluetooth headset connected. Checking volume floor...")
+                            handler.postDelayed({ enforceMinimumEarphoneVolume(announce = true) }, 1200)
+                        }
+                    }
                 }
-                Intent.ACTION_SCREEN_ON -> {
-                    val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date())
-                    speakStatus("The time is $time", 2)
-                }
-                android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
-                    DebugLogger.log("STEALTH", "Headset unplugged! Emergency Audio Kill-switch engaged.")
-                    stopAllPlayback()
-                }
-            }
         }
     }
     private lateinit var tts: TextToSpeech
@@ -93,6 +106,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            addAction(Intent.ACTION_HEADSET_PLUG)
+            addAction(android.bluetooth.BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
         }
         registerReceiver(audioSafetyReceiver, safetyFilter)
     }
@@ -218,8 +233,10 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
                 DebugLogger.log("AUTHORITY", "Manual Media Lock Triggered. Initiating Deep Audit.")
                 performDeepAudit()
                 claimMediaFocus()
+                enforceMinimumEarphoneVolume(announce = true)
             }
             "START_NAV" -> handleAutoStartNav()
+            "ENFORCE_VOLUME" -> enforceMinimumEarphoneVolume(announce = true)
         }
         return START_STICKY
     }
@@ -281,6 +298,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
         if (prefs.getBoolean("headset_only", true) && !hasHeadset) return
         if (!isReady) return
 
+        enforceMinimumEarphoneVolume(false)
+
         // Standardize rate for system notifications
         tts.setSpeechRate(0.9f)
 
@@ -338,6 +357,50 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             DebugLogger.log("THRONE_AUDIT", "STATUS: THRONE VACANT. Re-asserting authority now.")
         }
         DebugLogger.log("THRONE_AUDIT", "--- AUDIT COMPLETE ---")
+    }
+
+    private fun isHeadsetConnected(): Boolean {
+        val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val devices = am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+            val hasHeadset = devices.any { device ->
+                device.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                device.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                device.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (
+                    device.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                    device.type == android.media.AudioDeviceInfo.TYPE_BLE_SPEAKER
+                ))
+            }
+            if (hasHeadset) return true
+        }
+        return am.isWiredHeadsetOn || am.isBluetoothA2dpOn
+    }
+
+    private fun enforceMinimumEarphoneVolume(announce: Boolean = false) {
+        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("min_volume_floor", true)) return
+        if (!prefs.getBoolean("is_active", true)) return
+
+        if (!isHeadsetConnected()) {
+            DebugLogger.log("VOLUME_SAFETY", "Aborted volume boost: No headset connected. Loudspeaker untouched.")
+            return
+        }
+
+        val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val currentVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        val minVol = kotlin.math.ceil(maxVol * 0.50).toInt().coerceAtLeast(1)
+
+        if (currentVol < minVol) {
+            am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, minVol, 0)
+            DebugLogger.log("VOLUME", "Volume floor applied: Raised from $currentVol/$maxVol to $minVol/$maxVol for headset.")
+            if (announce) {
+                speakStatus("Earphone volume set to 50%", 1)
+            }
+        } else {
+            DebugLogger.log("VOLUME", "Volume verified adequate ($currentVol/$maxVol).")
+        }
     }
 
     private fun logAudioEnvironment() {
@@ -618,6 +681,8 @@ class PlaybackService : Service(), TextToSpeech.OnInitListener {
             DebugLogger.log("STEALTH", "Playback blocked: Stealth mode active and no headset found.")
             return
         }
+
+        enforceMinimumEarphoneVolume(false)
 
         DebugLogger.log("MEDIA_TRACE", "Attempting playback of ${file.name} (Size: ${file.length()} bytes)")
 
