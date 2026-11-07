@@ -57,6 +57,12 @@ class ImageMonitorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         DebugLogger.init(applicationContext)
+        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("is_active", true)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         if (intent?.action == "COMMAND_FLUSH_BATCH") {
             flushQueue()
             return START_STICKY
@@ -84,6 +90,12 @@ class ImageMonitorService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("is_active", true)) {
+            super.onTaskRemoved(rootIntent)
+            return
+        }
+
         val restartServiceIntent = Intent(applicationContext, this.javaClass)
         restartServiceIntent.setPackage(packageName)
         val restartServicePendingIntent = android.app.PendingIntent.getService(
