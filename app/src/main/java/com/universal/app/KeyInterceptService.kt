@@ -53,6 +53,13 @@ class KeyInterceptService : AccessibilityService() {
     private var cameraExitPending = false
     private val cameraExitHandler = Handler(Looper.getMainLooper())
     private val cameraExitRunnable = Runnable {
+        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("is_active", true)) {
+            isInCameraSession = false
+            cameraExitPending = false
+            return@Runnable
+        }
+
         val activeRoot = rootInActiveWindow?.packageName?.toString() ?: ""
         val rootIsCam = activeRoot.contains("camera") || activeRoot.contains("lens")
         
@@ -636,6 +643,9 @@ class KeyInterceptService : AccessibilityService() {
     }
 
     private fun speak(msg: String, immediate: Boolean = false) {
+        val prefs = getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("is_active", true)) return
+
         val intent = Intent(this, PlaybackService::class.java).apply {
             action = "SPEAK_STATUS"
             putExtra("message", msg)
@@ -786,6 +796,19 @@ class KeyInterceptService : AccessibilityService() {
             showTouchBlocker()
         } else if ((!isActive || !shouldBlock) && blockerOverlay != null) {
             removeTouchBlocker()
+        }
+
+        if (!isActive) {
+            if (isInCameraSession || cameraExitPending) {
+                isInCameraSession = false
+                cameraExitPending = false
+                cameraExitHandler.removeCallbacks(cameraExitRunnable)
+                autoCaptureRunnable?.let { handler.removeCallbacks(it) }
+                autoCaptureRunnable = null
+                isLensSwitchPending = false
+                lastCameraPackage = ""
+            }
+            return
         }
 
         val type = event?.eventType
