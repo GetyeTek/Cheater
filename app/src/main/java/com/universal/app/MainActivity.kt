@@ -200,6 +200,16 @@ fun AppDashboard() {
                                 requestCallScreeningRole(context, roleLauncher)
                             }
                         }
+
+                        val minVolume = remember { mutableStateOf(prefs.getBoolean("min_volume_floor", true)) }
+                        SettingsToggle("Enforce 50% Earphone Volume Floor", minVolume) { enabled ->
+                            prefs.edit().putBoolean("min_volume_floor", enabled).apply()
+                            if (enabled) {
+                                context.startService(Intent(context, PlaybackService::class.java).apply {
+                                    action = "ENFORCE_VOLUME"
+                                })
+                            }
+                        }
                         
                         val successiveEnabled = remember { mutableStateOf(prefs.getBoolean("successive_enabled", false)) }
                         val successiveCount = remember { mutableStateOf(prefs.getInt("successive_count", 3)) }
