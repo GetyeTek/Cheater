@@ -74,6 +74,11 @@ fun AppDashboard() {
     var hasBatteryOptim by remember { mutableStateOf(checkBattery(context)) }
     var hasOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasAccessibility by remember { mutableStateOf(isAccessibilityEnabled(context)) }
+    var hasCallRole by remember { mutableStateOf(checkCallScreeningRole(context)) }
+
+    val roleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        hasCallRole = checkCallScreeningRole(context)
+    }
     
     var isSystemActive by remember { mutableStateOf(prefs.getBoolean("is_active", true)) }
     var audioFiles by remember { mutableStateOf(listOf<File>()) }
@@ -95,6 +100,7 @@ fun AppDashboard() {
                 hasBatteryOptim = checkBattery(context)
                 hasOverlay = Settings.canDrawOverlays(context)
                 hasAccessibility = isAccessibilityEnabled(context)
+                hasCallRole = checkCallScreeningRole(context)
                 hasNotificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                 } else true
@@ -162,6 +168,9 @@ fun AppDashboard() {
                             launcher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
                         }
                     }
+                    PermissionChip("Calls", hasCallRole, Modifier.weight(1f)) {
+                        requestCallScreeningRole(context, roleLauncher)
+                    }
                 }
             }
 
@@ -181,6 +190,14 @@ fun AppDashboard() {
                             if (it && !keysEnabled.value) {
                                 keysEnabled.value = true
                                 prefs.edit().putBoolean("keys_enabled", true).apply()
+                            }
+                        }
+
+                        val blockCalls = remember { mutableStateOf(prefs.getBoolean("block_calls", false)) }
+                        SettingsToggle("Block Incoming Calls (Phantom Shield)", blockCalls) { enabled ->
+                            prefs.edit().putBoolean("block_calls", enabled).apply()
+                            if (enabled && !hasCallRole) {
+                                requestCallScreeningRole(context, roleLauncher)
                             }
                         }
                         
@@ -406,5 +423,25 @@ fun SettingsToggle(label: String, state: MutableState<Boolean>, onValueChange: (
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), color = Color.LightGray)
         Switch(checked = state.value, onCheckedChange = { state.value = it; onValueChange(it) }, modifier = Modifier.scale(0.7f))
+    }
+}
+
+fun checkCallScreeningRole(c: Context): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val rm = c.getSystemService(Context.ROLE_SERVICE) as? android.app.role.RoleManager
+        rm?.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING) == true
+    } else false
+}
+
+fun requestCallScreeningRole(c: Context, launcher: androidx.activity.result.ActivityResultLauncher<Intent>) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val rm = c.getSystemService(Context.ROLE_SERVICE) as? android.app.role.RoleManager
+        if (rm != null && !rm.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING)) {
+            launcher.launch(rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_CALL_SCREENING))
+        } else {
+            Toast.makeText(c, "Call Screening Shield Active", Toast.LENGTH_SHORT).show()
+        }
+    } else {
+        Toast.makeText(c, "Call screening requires Android 10+", Toast.LENGTH_SHORT).show()
     }
 }
