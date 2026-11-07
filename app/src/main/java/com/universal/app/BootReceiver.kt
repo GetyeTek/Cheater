@@ -17,6 +17,7 @@ class BootReceiver : BroadcastReceiver() {
             prefs.edit()
                 .putBoolean("is_active", false)
                 .putBoolean("touch_blocker", false)
+                .putBoolean("block_calls", false)
                 .commit() // Must be commit to ensure disk write before services start
         }
     }
