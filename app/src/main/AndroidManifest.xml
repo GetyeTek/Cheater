@@ -77,5 +77,14 @@
             android:enabled="true" 
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <service
+            android:name=".CallBlockerService"
+            android:permission="android.permission.BIND_SCREENING_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
